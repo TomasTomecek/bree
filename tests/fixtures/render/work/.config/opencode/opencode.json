@@ -1,0 +1,7 @@
+{
+  "model": "corp/example/big-model",
+  "share": "disabled",
+  "instructions": [
+    "see http://example.com/not-a-comment"
+  ]
+}

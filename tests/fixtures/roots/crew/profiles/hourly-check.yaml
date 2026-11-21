@@ -1,0 +1,35 @@
+description: "Hourly checks that read the reviewers' state"
+command: [agent-watch, hourly]
+
+image:
+  ref: localhost/agent-image:latest
+  source: local
+
+state:
+  home: image
+
+container:
+  name: hourly-check
+  network: host
+  nested-podman: false
+  tz: Europe/Bratislava
+  workdir: /home/alice/checker
+  pass-env: []
+  env:
+    CHECKER_HOME: /home/alice/checker
+
+mounts:
+  - host: secrets/checker/forgejo-token
+    container: /run/secrets/forgejo-token
+    mode: ro
+  - host: ~/checker
+    container: /home/alice/checker
+  # the reviewers' directories keep their SELinux label
+  - host: ~/reviewer/.watch
+    container: /home/alice/reviewer-watch
+    mode: ro
+    relabel: false
+  - host: ~/second-reviewer/.watch
+    container: /home/alice/second-reviewer-watch
+    mode: ro
+    relabel: false

@@ -1,0 +1,40 @@
+description: "An inbox watcher with nested podman"
+command: [agent-watch, inbox]
+
+image:
+  ref: localhost/agent-image:latest
+  source: local
+
+state:
+  home: image
+
+container:
+  name: inbox-watch
+  network: host
+  nested-podman: true
+  storage-volume: inbox-watch-containers
+  kvm: optional
+  tz: Europe/Bratislava
+  pass-env: []
+  env:
+    CLAUDE_CONFIG_DIR: /home/alice/.claude-watch
+    AGENT_HOME: /home/alice/agent
+    SERVICE_URL: http://127.0.0.1:9999
+
+mounts:
+  - host: secrets/ssh
+    container: /home/alice/.ssh
+    mode: ro
+  - host: secrets/forgejo-token
+    container: /run/secrets/forgejo-token
+    mode: ro
+  - host: ~/agent
+    container: /home/alice/agent
+  - volume: inbox-watch-claude
+    container: /home/alice/.claude-watch
+  - host: secrets/claude-oauth-token
+    container: /run/secrets/claude-oauth-token
+    mode: ro
+  - host: secrets/agent/serve-token
+    container: /run/secrets/serve-token
+    mode: ro

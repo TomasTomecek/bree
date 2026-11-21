@@ -1,0 +1,19 @@
+{
+  "skipAutoPermissionPrompt": true,
+  "autoMode": {
+    "environment": [
+      "$defaults",
+      "Claude Code runs in a rootless podman container that bree started, for the bree profile home. The user namespace is keep-id: uid 1000 in the container is the host user. The home directory ~ is bree's state directory of this profile (/home/alice/.local/share/bree/state/home on the host), not the host user's home. Files under ~ are this container's state, except under the mounts described below. The host path /home/alice/src is mounted at /home/alice/src, read-write. Changes there are real changes on the host. The host path /home/alice/.gitconfig is mounted at /home/alice/.gitconfig, read-only (optional). The bree config roots are mounted read-only under /run/bree/roots. bree run -m adds more host mounts for that run, read-write unless given as ro. The working directory is the host directory bree run was started in, inside one of the mounts above or else mounted read-write at the same path. Changes there are real changes on the host, unless a read-only mount holds it. The network is pasta: the container has its own network namespace with outbound internet access, and the host's local network is reachable. Rootless podman works inside the container, with its storage in the podman volume bree-home-containers at ~/.local/share/containers. Containers started there stay inside this container. /dev/kvm is available, for VMs that stay inside the container."
+    ]
+  },
+  "model": "opus",
+  "permissions": {
+    "allow": [
+      "Bash(git status)"
+    ],
+    "deny": []
+  },
+  "env": {
+    "OWNER": "alice"
+  }
+}

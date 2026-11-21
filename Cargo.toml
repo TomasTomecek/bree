@@ -1,0 +1,18 @@
+[package]
+name = "bree"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Run coding agents in containers from profiles and render their configuration"
+license = "MIT"
+readme = "README.md"
+build = "build.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+sha1 = "0.11.0"
+sha2 = "0.11.0"
+similar = "3.2.1"
+yaml-rust2 = "0.10"

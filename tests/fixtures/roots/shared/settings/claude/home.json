@@ -1,0 +1,5 @@
+{
+  "model": "opus",
+  "permissions": {"allow": ["Bash(git status)"], "deny": []},
+  "env": {"OWNER": "{{var.owner}}"}
+}

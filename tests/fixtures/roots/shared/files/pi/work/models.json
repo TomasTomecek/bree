@@ -1,0 +1,3 @@
+{
+  "providers": {"corp": {"baseUrl": "http://localhost:4000"}}
+}

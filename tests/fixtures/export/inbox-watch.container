@@ -1,0 +1,23 @@
+[Container]
+Image=localhost/agent-image:latest
+Pull=never
+ContainerName=inbox-watch
+Timezone=Europe/Bratislava
+UserNS=keep-id
+SecurityLabelDisable=true
+AddDevice=-/dev/kvm
+Unmask=ALL
+RunInit=true
+LogDriver=passthrough
+Network=host
+Exec=agent-watch inbox
+Volume=inbox-watch-containers:/home/alice/.local/share/containers
+Volume=inbox-watch-claude:/home/alice/.claude-watch
+Volume=/home/alice/src/project/secrets/ssh:/home/alice/.ssh:ro,z
+Volume=%h/agent:/home/alice/agent:z
+Volume=/home/alice/src/project/secrets/claude-oauth-token:/run/secrets/claude-oauth-token:ro,z
+Volume=/home/alice/src/project/secrets/forgejo-token:/run/secrets/forgejo-token:ro,z
+Volume=/home/alice/src/project/secrets/agent/serve-token:/run/secrets/serve-token:ro,z
+Environment=CLAUDE_CONFIG_DIR=/home/alice/.claude-watch
+Environment=AGENT_HOME=/home/alice/agent
+Environment=SERVICE_URL=http://127.0.0.1:9999

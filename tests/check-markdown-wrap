@@ -1,0 +1,565 @@
+#!/usr/bin/env python3
+"""Check that tracked Markdown files wrap prose at 80 columns, and rewrap them.
+
+This is a vendored copy; the canonical script and its tests live upstream.
+Change it upstream first, then copy it here.
+
+    tests/check-markdown-wrap [--exclude GLOB]... [--base REF]
+    tests/check-markdown-wrap --list [--exclude GLOB]...
+    tests/check-markdown-wrap --fix FILE...
+
+Files already too wide are listed in tests/markdown-wrap-todo and skipped by
+the length check. With a base ref (--base, or origin/$GITHUB_BASE_REF), a file
+removed from that list must keep exactly the same words as at the base ref.
+"""
+import argparse
+import fnmatch
+import os
+import re
+import subprocess
+import sys
+
+W = 80
+TODO = "tests/markdown-wrap-todo"
+HINT = ("Wrap prose at 80 columns; "
+        "tests/check-markdown-wrap --fix FILE rewraps long lines.")
+
+LIST_RE = re.compile(r"^(\s*)([-*+]|\d{1,9}[.)])(\s+)(\[[ xX]\]\s+)?")
+QUOTE_RE = re.compile(r"^(\s*)>( ?)")
+QUOTE_STRIP_RE = re.compile(r"^\s*(?:>\s*)*")
+FENCE_OPEN_RE = re.compile(r"^\s*(`{3,}|~{3,})")
+HEADING_RE = re.compile(r"^#{1,6}(\s|$)")
+LINKDEF_RE = re.compile(r"^\[[^\]]+\]:\s")
+THEMATIC_RE = re.compile(r"^\s*([-*_])(\s*\1){2,}\s*$")
+BAD_TOKEN_RES = [
+    re.compile(r"[-*+]"),
+    re.compile(r"\d{1,9}[.)]"),
+    re.compile(r"#{1,6}"),
+    re.compile(r"=+"),
+    re.compile(r"-+"),
+    re.compile(r"\[[^\]]+\]:"),
+]
+BAD_TOKEN_STARTS = (">", "```", "~~~", "|", "<")
+
+
+# ---------------------------------------------------------------- line rules
+
+def fence_open(line):
+    """Return (char, length) if line opens a fenced code block, else None."""
+    body = QUOTE_STRIP_RE.sub("", line)
+    m = FENCE_OPEN_RE.match(body)
+    if not m:
+        return None
+    fence = m.group(1)
+    # A backtick fence's info string cannot contain a backtick, so a line
+    # such as "```code``` text" is inline code, not a fence.
+    if fence[0] == "`" and "`" in body[m.end():]:
+        return None
+    return (fence[0], len(fence))
+
+
+def fence_closes(line, fence):
+    char, n = fence
+    body = QUOTE_STRIP_RE.sub("", line)
+    return re.fullmatch(re.escape(char) + f"{{{n},}}" + r"\s*", body) is not None
+
+
+def is_blank(line):
+    return not line.strip()
+
+
+def is_hard_break(line):
+    line = line.rstrip("\r")
+    return line.endswith(("  ", "\\"))
+
+
+def no_space_rest(line):
+    rest = QUOTE_STRIP_RE.sub("", line)
+    m = LIST_RE.match(rest)
+    if m:
+        rest = rest[m.end():]
+    return re.search(r"\s", rest.strip()) is None
+
+
+def is_exempt(line):
+    """Exemptions that do not depend on neighbouring lines."""
+    s = line.strip()
+    return (s.startswith(("|", "<")) or HEADING_RE.match(s) is not None or LINKDEF_RE.match(s) is not None or is_hard_break(line) or no_space_rest(line))
+
+
+def front_matter_end(lines):
+    """Index of the line closing YAML front matter, or -1."""
+    if lines and lines[0] == "---":
+        for j in range(1, len(lines)):
+            if lines[j] in ("---", "..."):
+                return j
+    return -1
+
+
+def indent_of(line):
+    expanded = line.expandtabs(4)
+    return len(expanded) - len(expanded.lstrip())
+
+
+def item_content_col(m):
+    """Column where a list item's content starts (CommonMark: one space
+    after the marker when five or more follow it, the rest is code)."""
+    if len(m.group(3)) > 4:
+        return m.end(2) + 1
+    return m.end(3)
+
+
+def has_open_paragraph(line):
+    """True if a quoted line leaves paragraph text that a lazy line can
+    continue (an approximation: text or a list item with text)."""
+    s = line.strip()
+    m = LIST_RE.match(line)
+    if m:
+        s = line[m.end():].strip()
+    return (bool(s) and not HEADING_RE.match(s)
+            and THEMATIC_RE.match(line) is None and fence_open(line) is None)
+
+
+def code_mask(lines, start=0):
+    """Return a list of bools, True for lines in a code block: fenced (fence
+    lines included) or indented, that is a run of lines indented four or more
+    columns beyond the enclosing list item's content (or the margin at top
+    level), after a blank line. Lines before start are never code."""
+    mask = [False] * len(lines)
+    fence = None
+    items = []  # content columns of the open list items, innermost last
+    after_blank = True
+    in_code = 0  # minimum indent of the indented code block we are in
+    i = start
+    while i < len(lines):
+        line = lines[i]
+        if fence:
+            mask[i] = True
+            if fence_closes(line, fence):
+                fence = None
+            i += 1
+            continue
+        if is_blank(line):
+            after_blank = True
+            i += 1
+            continue
+        if QUOTE_RE.match(line) and fence_open(line) is None:
+            while items and indent_of(line) < items[-1]:
+                items.pop()
+            # Indented code inside a quote: work on the quote's content. A
+            # line without ">" right after quoted paragraph text continues
+            # that paragraph (a lazy line) and stays part of the quote.
+            j = i
+            inner = []
+            while j < len(lines):
+                if QUOTE_RE.match(lines[j]):
+                    inner.append(QUOTE_RE.sub("", lines[j], count=1))
+                elif (not is_blank(lines[j]) and not starts_block(lines[j])
+                      and has_open_paragraph(inner[-1])
+                      and not code_mask(inner)[-1]):
+                    inner.append(lines[j].lstrip())
+                else:
+                    break
+                j += 1
+            mask[i:j] = code_mask(inner)
+            # The quote holds no open paragraph now, so the next line starts
+            # a new block, as after a blank line.
+            in_code = 0
+            after_blank = True
+            i = j
+            continue
+        ind = indent_of(line)
+        if in_code and ind >= in_code:
+            mask[i] = True
+            i += 1
+            continue
+        in_code = 0
+        if after_blank:
+            while items and ind < items[-1]:
+                items.pop()
+            margin = items[-1] if items else 0
+            if ind >= margin + 4:
+                in_code = margin + 4
+                mask[i] = True
+                after_blank = False
+                i += 1
+                continue
+        after_blank = False
+        fence = fence_open(line)
+        if fence:
+            mask[i] = True
+            i += 1
+            continue
+        m = LIST_RE.match(line)
+        if m:
+            while items and ind < items[-1]:
+                items.pop()
+            items.append(len(line[:item_content_col(m)].expandtabs(4)))
+        i += 1
+    return mask
+
+
+def long_lines(text, width=W):
+    """Return [(lineno, length)] of lines wider than width and not exempt."""
+    lines = text.split("\n")
+    fm_end = front_matter_end(lines)
+    code = code_mask(lines, fm_end + 1)
+    result = []
+    for idx, line in enumerate(lines):
+        if idx <= fm_end or code[idx]:
+            continue
+        length = len(line.rstrip("\r"))
+        if length > width and not is_exempt(line):
+            result.append((idx + 1, length))
+    return result
+
+
+# --------------------------------------------------------------------- fixing
+
+def is_kept(line):
+    """Lines --fix copies unchanged and that end a paragraph."""
+    s = line.strip()
+    return (is_blank(line) or s.startswith(("|", "<")) or HEADING_RE.match(s) is not None or LINKDEF_RE.match(s) is not None or THEMATIC_RE.match(line) is not None or is_hard_break(line))
+
+
+def is_bad_token(tok):
+    return (tok.startswith(BAD_TOKEN_STARTS)
+            or any(r.fullmatch(tok) for r in BAD_TOKEN_RES))
+
+
+def wrap_words(words, first_prefix, cont_prefix, width):
+    lines = []
+    prefix = first_prefix
+    cur = []
+    for w in words:
+        if not cur:
+            cur = [w]
+            continue
+        if len(prefix) + len(" ".join(cur + [w])) <= width:
+            cur.append(w)
+            continue
+        carry = [w]
+        while is_bad_token(carry[0]) and len(cur) > 1:
+            carry.insert(0, cur.pop())
+        if is_bad_token(carry[0]):
+            # Cannot move anything down: keep the words where they were.
+            cur.extend(carry)
+            lines.append(prefix + " ".join(cur))
+            prefix = cont_prefix
+            cur = []
+            continue
+        lines.append(prefix + " ".join(cur))
+        prefix = cont_prefix
+        cur = carry
+    if cur:
+        lines.append(prefix + " ".join(cur))
+    return lines
+
+
+BACKTICKS_RE = re.compile(r"`+")
+
+
+def span_state(word, open_run):
+    """Return the backtick run length of the code span still open after word,
+    given the one open before it (0 when none). A run opens a span, and only
+    a run of the same length closes it; outside a span, a backslash before a
+    run escapes its first backtick."""
+    for m in BACKTICKS_RE.finditer(word):
+        n = len(m.group(0))
+        if open_run:
+            if n == open_run:
+                open_run = 0
+        elif m.start() > 0 and word[m.start() - 1] == "\\":
+            if n > 1:
+                open_run = n - 1
+        else:
+            open_run = n
+    return open_run
+
+
+def span_words(words, max_len):
+    """Join the words of each inline code span into one word, so that
+    wrap_words never breaks a line inside it. A span that never closes, or
+    that would be longer than max_len, keeps its words separate."""
+    out = []
+    i = 0
+    while i < len(words):
+        open_run = span_state(words[i], 0)
+        j = i + 1
+        while open_run and j < len(words):
+            open_run = span_state(words[j], open_run)
+            j += 1
+        if open_run:
+            # Never closes: the backticks are literal, scan on from the next
+            # word.
+            out.append(words[i])
+            i += 1
+            continue
+        joined = " ".join(words[i:j])
+        if len(joined) <= max_len:
+            out.append(joined)
+        else:
+            out.extend(words[i:j])
+        i = j
+    return out
+
+
+def leading_ws(line):
+    return line[:len(line) - len(line.lstrip())]
+
+
+def starts_block(line):
+    """True if line cannot continue the paragraph or list item before it."""
+    return (is_kept(line)
+            or fence_open(line) is not None
+            or QUOTE_RE.match(line) is not None
+            or LIST_RE.match(line) is not None)
+
+
+def rewrap_block(block, width):
+    if not any(len(line.rstrip("\r")) > width for line in block):
+        return block
+    m = LIST_RE.match(block[0])
+    if m:
+        first_prefix = m.group(0)
+        rest_first = block[0][m.end():]
+        if len(block) > 1:
+            cont_prefix = leading_ws(block[1])
+        else:
+            cont_prefix = " " * len(first_prefix)
+    else:
+        first_prefix = leading_ws(block[0])
+        rest_first = block[0][len(first_prefix):]
+        cont_prefix = leading_ws(block[1]) if len(block) > 1 else first_prefix
+    # A code span that fits on a continuation line moves down whole; a longer
+    # one stays split, so no line grows wider than splitting it would make it.
+    max_len = width - len(cont_prefix)
+    if any(len(line.strip()) < width // 2 for line in block[:-1]):
+        # Line-oriented block, such as "Hostname: ..." fields one per line:
+        # wrap each long line on its own and keep the other lines as they are.
+        out = []
+        for k, line in enumerate(block):
+            if len(line.rstrip("\r")) <= width:
+                out.append(line)
+            elif k == 0:
+                out.extend(wrap_words(span_words(rest_first.split(), max_len),
+                                      first_prefix, cont_prefix, width))
+            else:
+                out.extend(wrap_words(span_words(line.split(), max_len),
+                                      leading_ws(line), cont_prefix, width))
+        return out
+    words = rest_first.split()
+    for line in block[1:]:
+        words.extend(line.split())
+    return wrap_words(span_words(words, max_len), first_prefix, cont_prefix,
+                      width)
+
+
+def fix_lines(lines, width, top=True):
+    out = []
+    i = 0
+    n = len(lines)
+    if top:
+        fm_end = front_matter_end(lines)
+        if fm_end >= 0:
+            out.extend(lines[:fm_end + 1])
+            i = fm_end + 1
+    code = code_mask(lines, i)
+    while i < n:
+        line = lines[i]
+        if code[i]:
+            out.append(line)
+            i += 1
+            continue
+        if QUOTE_RE.match(line):
+            j = i
+            while j < n and QUOTE_RE.match(lines[j]):
+                j += 1
+            run = lines[i:j]
+            indent = QUOTE_RE.match(run[0]).group(1)
+            prefix = indent + "> "
+            inner = [QUOTE_RE.sub("", ln, count=1) for ln in run]
+            fixed = fix_lines(inner, max(width - len(prefix), 1), top=False)
+            if fixed == inner:
+                out.extend(run)
+            else:
+                for ln in fixed:
+                    out.append(prefix + ln if ln else indent + ">")
+            i = j
+            continue
+        if is_kept(line):
+            out.append(line)
+            i += 1
+            continue
+        j = i + 1
+        while j < n and not code[j] and not starts_block(lines[j]):
+            j += 1
+        out.extend(rewrap_block(lines[i:j], width))
+        i = j
+    return out
+
+
+def words(text):
+    """Whitespace-split words, ignoring leading block quote markers (the
+    number of quote lines changes when a quote is rewrapped)."""
+    return [w for line in text.split("\n")
+            for w in QUOTE_STRIP_RE.sub("", line).split()]
+
+
+def fix_text(text, width=W):
+    fixed = "\n".join(fix_lines(text.split("\n"), width))
+    if words(text) != words(fixed):
+        raise AssertionError("--fix would change the words of the file")
+    return fixed
+
+
+# ------------------------------------------------------------------------ git
+
+def git(*args, check=True):
+    return subprocess.run(["git", *args], capture_output=True, check=check)
+
+
+def read(path):
+    with open(path, "rb") as f:
+        return f.read().decode("utf-8")
+
+
+def parse_todo(text):
+    entries = set()
+    for line in text.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            entries.add(line)
+    return entries
+
+
+def excluded(path, globs):
+    return any(fnmatch.fnmatchcase(path, g) for g in globs)
+
+
+def tracked_markdown():
+    out = git("ls-files", "-z", "--", "*.md").stdout.decode("utf-8")
+    return [p for p in out.split("\0") if p]
+
+
+def failing(paths):
+    """Map path -> list of long lines, only for paths that fail."""
+    result = {}
+    for path in paths:
+        found = long_lines(read(path))
+        if found:
+            result[path] = found
+    return result
+
+
+def resolve_base(args):
+    ref = args.base
+    if not ref:
+        env = os.environ.get("GITHUB_BASE_REF", "")
+        if env:
+            ref = "origin/" + env
+    if not ref:
+        return None
+    r = git("rev-parse", "--verify", "-q", ref + "^{commit}", check=False)
+    if r.returncode != 0:
+        print(f"error: base ref {ref} does not resolve", file=sys.stderr)
+        sys.exit(2)
+    return ref
+
+
+def word_check(ref, head_todo):
+    base = git("show", f"{ref}:{TODO}", check=False)
+    base_todo = parse_todo(base.stdout.decode("utf-8")) if base.returncode == 0 else set()
+    failed = False
+    for path in sorted(base_todo - head_todo):
+        if not os.path.isfile(path):
+            continue
+        old = git("show", f"{ref}:{path}", check=False)
+        if old.returncode != 0:
+            print(f"error: {path} did not exist at {ref}")
+            failed = True
+            continue
+        a = words(old.stdout.decode("utf-8"))
+        b = words(read(path))
+        if a == b:
+            continue
+        k = 0
+        while k < min(len(a), len(b)) and a[k] == b[k]:
+            k += 1
+        old_w = a[k] if k < len(a) else "<end>"
+        new_w = b[k] if k < len(b) else "<end>"
+        print(f"{path}: words differ from {ref} "
+              f"(first difference at word {k + 1}: {old_w!r} -> {new_w!r})")
+        failed = True
+    return failed
+
+
+# ----------------------------------------------------------------------- main
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--exclude", action="append", default=[], metavar="GLOB")
+    ap.add_argument("--base", metavar="REF")
+    ap.add_argument("--list", action="store_true")
+    ap.add_argument("--fix", action="store_true")
+    ap.add_argument("files", nargs="*", metavar="FILE")
+    args = ap.parse_args()
+
+    if args.fix:
+        if not args.files:
+            ap.error("--fix needs at least one FILE")
+        given = [(f, os.path.abspath(f)) for f in args.files]
+    elif args.files:
+        ap.error("FILE arguments are only for --fix")
+
+    top = git("rev-parse", "--show-toplevel").stdout.decode("utf-8").strip()
+    os.chdir(top)
+
+    if args.fix:
+        for name, path in given:
+            text = read(path)
+            fixed = fix_text(text)
+            if fixed != text:
+                with open(path, "wb") as f:
+                    f.write(fixed.encode("utf-8"))
+                print(f"fixed: {name}")
+        return 0
+
+    tracked = tracked_markdown()
+    checked = [p for p in tracked
+               if not excluded(p, args.exclude) and os.path.isfile(p)]
+    bad = failing(checked)
+
+    if args.list:
+        for path in sorted(bad):
+            print(path)
+        return 0
+
+    todo = parse_todo(read(TODO)) if os.path.isfile(TODO) else set()
+    ref = resolve_base(args)
+
+    failed = False
+    for path in checked:
+        if path in todo or path not in bad:
+            continue
+        for lineno, length in bad[path]:
+            print(f"{path}:{lineno}: {length} > {W} columns")
+            failed = True
+    for path in sorted(todo):
+        if path not in tracked or not os.path.isfile(path):
+            print(f"note: {path} in {TODO} is not a tracked Markdown file",
+                  file=sys.stderr)
+        elif path in checked and path not in bad:
+            print(f"note: {path} in {TODO} passes now; remove it",
+                  file=sys.stderr)
+
+    if ref and word_check(ref, todo):
+        failed = True
+    if failed:
+        print(HINT)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

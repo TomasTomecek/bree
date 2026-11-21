@@ -1,0 +1,9 @@
+summary: Install the built RPM and run bree on a fixture root
+description: |
+    Packit and Testing Farm install the RPM from Copr before the test runs.
+    Locally, add it with `prepare --how install --package <file>`.
+discover:
+    how: fmf
+    test: /tests/tmt/rpm
+execute:
+    how: tmt

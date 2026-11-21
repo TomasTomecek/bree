@@ -1,0 +1,27 @@
+description: "Home: Claude subscription, personal rules"
+harness: claude
+harnesses: [claude, pi]
+pool: claude
+
+rules: [core, claude:claude-code, home]
+skills: all
+commands: all
+settings:
+  claude: [home]
+files:
+  claude: [statusline]
+  pi: [base]
+
+container:
+  network: pasta
+  nested-podman: true
+  kvm: true
+
+mounts:
+  - host: ~/src
+  - host: ~/.gitconfig
+    mode: ro
+    optional: true
+
+vars:
+  owner: alice

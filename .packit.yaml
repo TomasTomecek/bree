@@ -1,0 +1,57 @@
+# https://packit.dev/docs/configuration
+specfile_path: bree.spec
+upstream_package_name: bree
+downstream_package_name: bree
+upstream_tag_template: "v{version}"
+
+srpm_build_deps:
+  - cargo
+  - git
+  - make
+  - rpm-build
+
+actions:
+  # `make archive` (Makefile) writes the source tarball and the vendor tarball
+  # next to bree.spec and sets the version and commit globals of bree.spec,
+  # the same steps `make srpm` runs. Packit reads the archive path from the last
+  # line of output and sets Version in the spec to PACKIT_PROJECT_VERSION,
+  # which the tarballs are named after.
+  #
+  # bree.spec carries no real version, so Packit takes the current version
+  # from Cargo.toml (the same sed the Makefile uses) instead of from the spec
+  # or from tags, which may not exist yet.
+  get-current-version:
+    - make -s version
+  create-archive:
+    - make -s archive OUTDIR=. SPEC_OUT=bree.spec
+
+jobs:
+  # RPMs for every pull request, so packaging breaks show up in review.
+  - job: copr_build
+    trigger: pull_request
+    targets: &targets
+      - fedora-44
+      - fedora-45
+      - fedora-rawhide
+      - centos-stream-10
+
+  # Runs the tmt plans in plans/ against the built RPM.
+  - job: tests
+    trigger: pull_request
+    targets: *targets
+
+  # Installable RPMs from main:
+  #   dnf copr enable ttomecek/tools-latest
+  - job: copr_build
+    trigger: commit
+    branch: main
+    project: tools-latest
+    owner: ttomecek
+    targets: *targets
+
+  # Tagged releases (vX.Y.Z) into a separate, stable Copr project.
+  - job: copr_build
+    trigger: release
+    project: tools-stable
+    owner: ttomecek
+    targets: *targets

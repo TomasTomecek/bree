@@ -1,0 +1,9 @@
+summary: Run cargo test from the source tree
+description: |
+    The RPM build does not run the test suite, so this plan runs it on a real
+    Fedora or CentOS Stream machine, with the crates from the network.
+discover:
+    how: fmf
+    test: /tests/tmt/cargo-test
+execute:
+    how: tmt

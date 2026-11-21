@@ -1,0 +1,39 @@
+description: "Work: corp models, work rules, no personal config"
+harness: claude
+harnesses: [claude, pi, opencode]
+pool: corp
+
+rules: [core, claude:claude-code, work, work-internal]
+skills: all
+commands: [review-text]
+settings:
+  claude: [work, work-internal]
+  opencode: [work]
+files:
+  claude: [statusline]
+  pi: [base, work]
+# only on the work machine, in the private root
+optional: [work-internal]
+
+container:
+  network: pasta
+  nested-podman: true
+
+mounts:
+  - host: ~/src
+  - host: ~/.gitconfig
+    mode: ro
+    optional: true
+
+secrets:
+  corp:
+    source: env
+    var: CORP_KEY
+    env: [CORP_KEY]
+    required: false
+    harness-env:
+      claude: [ANTHROPIC_API_KEY]
+      pi: [OPENAI_API_KEY, ANTHROPIC_API_KEY]
+
+vars:
+  owner: alice

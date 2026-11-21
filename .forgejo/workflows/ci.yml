@@ -1,0 +1,56 @@
+# Format, lint and test the crate. cargo, rustfmt and clippy come with the CI
+# runner's image, so the job installs nothing; cargo only downloads the crates
+# pinned in Cargo.lock (--locked fails on a stale lock).
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  rust:
+    # A CentOS Stream 10 runner image with the Rust toolchain.
+    runs-on: cs10
+    env:
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain versions
+        run: |
+          cargo --version
+          cargo fmt --version
+          cargo clippy --version
+      - name: cargo fmt --check
+        run: cargo fmt --check
+      - name: cargo clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: cargo test
+        run: cargo test --locked
+      # The RPM (README, "Building the RPM"): `make srpm` vendors the crates,
+      # then rpmbuild --rebuild compiles offline. No mock here, it needs
+      # privileges. The guard installs rpm-build until the CI image has it.
+      - name: Build the RPM
+        run: |
+          set -eu
+          command -v rpmbuild || dnf install -y rpm-build
+          make srpm
+          rpmbuild --rebuild --define "_topdir $PWD/rpm/top" rpm/bree-*.src.rpm
+          rpm=$(ls rpm/top/RPMS/*/bree-*.rpm)
+          rpm -qlp "$rpm" | grep -x /usr/bin/bree
+          rpm2cpio "$rpm" | cpio -idm --quiet ./usr/bin/bree
+          ./usr/bin/bree --version
+          rm -rf usr
+      # Prose in tracked Markdown wraps at 80 columns. Files in
+      # tests/markdown-wrap-todo are skipped until they are rewrapped; on a PR,
+      # a file removed from that list must keep its words exactly as on the
+      # base branch, so a green check means only line breaks moved. The
+      # checker is a vendored script; it needs only python3.
+      - name: Check Markdown wrap
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          set -e
+          if [ -n "$BASE" ]; then
+            git fetch --no-tags --depth=1 origin "+refs/heads/$BASE:refs/remotes/origin/$BASE"
+            set -- --base "origin/$BASE"
+          fi
+          tests/check-markdown-wrap "$@"

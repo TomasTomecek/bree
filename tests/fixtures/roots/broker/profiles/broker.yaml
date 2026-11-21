@@ -1,0 +1,14 @@
+description: "Unattended claude job that spends through the credential broker"
+harness: claude
+
+container:
+  nested-podman: false
+  network: pasta
+
+secrets:
+  broker:
+    source: broker
+    url: http://127.0.0.1:8088/
+    token: ~/.config/bree/broker-token
+    route: anthropic
+    env: [BROKER_TOKEN]

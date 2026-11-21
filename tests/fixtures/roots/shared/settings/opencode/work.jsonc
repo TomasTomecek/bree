@@ -1,0 +1,6 @@
+{
+  // the provider for the work models
+  "model": "{{tier.big}}", /* the big model */
+  "share": "disabled",
+  "instructions": ["see http://example.com/not-a-comment",],
+}

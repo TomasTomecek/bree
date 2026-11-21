@@ -1,0 +1,16 @@
+pools:
+  claude:
+    big:    {model: claude-opus-5-5,   name: Opus}
+    medium: {model: claude-sonnet-5-5, name: Sonnet}
+    small:  {model: claude-haiku-5-5,  name: Haiku}
+
+  corp:
+    big:
+      model: example/big-model
+      name: Big Model
+      opencode: corp/example/big-model
+    medium: {fallback: big}
+    small:
+      model: example/small-model
+      name: Small Model
+      opencode: corp/example/small-model

@@ -1,0 +1,16 @@
+[Container]
+Image=localhost/agent-image:latest
+Pull=never
+ContainerName=hourly-check
+Timezone=Europe/Bratislava
+UserNS=keep-id
+RunInit=true
+LogDriver=passthrough
+Network=host
+WorkingDir=/home/alice/checker
+Exec=agent-watch hourly
+Volume=%h/checker:/home/alice/checker:z
+Volume=%h/reviewer/.watch:/home/alice/reviewer-watch:ro
+Volume=%h/second-reviewer/.watch:/home/alice/second-reviewer-watch:ro
+Volume=/home/alice/src/project/secrets/checker/forgejo-token:/run/secrets/forgejo-token:ro,z
+Environment=CHECKER_HOME=/home/alice/checker

@@ -1,0 +1,188 @@
+# Build bree-base (image/Containerfile, docs/design.md "Base image"), smoke
+# test it and, on main, push it to the internal Forgejo's container registry as
+# <host>/tt/bree-base:<version>, :<version>-<YYYYMMDD> and
+# :<version>-<YYYYMMDD>-<commit>.
+# Pull requests only build and test: no login, no push, and fork PRs get no
+# secrets anyway.
+#
+# Runs on a runner with the `podman` label, which reaches a remote podman
+# service through /var/run/docker.sock. That service does not see the
+# checkout, so the build context is sent from a temporary directory and the
+# smoke tests are commands in the image. The image gets a per-run tag in the
+# service's storage, removed at the end.
+name: image
+on:
+  pull_request:
+    # The image carries bree, and the entry point test renders the fixtures.
+    paths:
+      - image/**
+      - src/**
+      - build.rs
+      - Cargo.toml
+      - Cargo.lock
+      - tests/fixtures/**
+      - .forgejo/workflows/image.yml
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  image:
+    # A CentOS Stream 10 runner image with cargo and podman-remote.
+    runs-on: podman
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: never
+      CONTAINER_HOST: unix:///var/run/docker.sock
+      LOCAL: localhost/bree-base-build:ci-${{ forgejo.run_id }}
+      SERVER_URL: ${{ forgejo.server_url }}
+      OWNER: ${{ forgejo.repository_owner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The image carries the bree that built it (design, "Base image"). Built
+      # on CentOS Stream 10, so it needs only an older glibc than Fedora's.
+      - name: Build bree
+        run: cargo build --release --locked
+
+      # `bree image build` itself, through the remote podman: bree calls
+      # `podman`, and the job image has only podman-remote (CONTAINER_HOST
+      # above), which sends the context, so a `podman` link on PATH points at
+      # it.
+      # The profile only names the per-run tag. --no-cache pulls fedora:45
+      # afresh on every run. The check reads back the four labels `bree run`
+      # compares to decide on a rebuild.
+      - name: Build the image
+        run: |
+          set -eu
+          root=$(mktemp -d)
+          mkdir "$root/profiles"
+          printf 'harness: claude\nimage:\n  ref: %s\n' "$LOCAL" > "$root/profiles/ci.yaml"
+          bin=$(mktemp -d)
+          ln -s "$(command -v podman-remote)" "$bin/podman"
+          export PATH="$bin:$PATH"
+          target/release/bree --root "$root" -p ci image build --no-cache
+          version=$(target/release/bree --version | awk '{print $2}')
+          commit=$(target/release/bree --version | sed -n 's/.*(\(.*\))$/\1/p')
+          sha=$(sha256sum image/Containerfile | cut -d' ' -f1)
+          exe=$(sha256sum target/release/bree | cut -d' ' -f1)
+          labels=$(podman-remote image inspect --format '{{json .Labels}}' "$LOCAL")
+          echo "$labels"
+          echo "$labels" | jq -e --arg v "$version" --arg s "$sha" \
+            --arg e "$exe" --arg c "$commit" \
+            '.["org.opencontainers.image.version"] == $v and .["bree.containerfile-sha256"] == $s
+             and .["bree.exe-sha256"] == $e and .["bree.commit"] == $c'
+          target/release/bree --root "$root" -p ci image status
+          rm -rf "$root"
+
+      # Run as bree runs it: uid 1000 with a passwd entry added at run time and
+      # a writable home (bree mounts the profile's state directory there; a
+      # tmpfs here). One --version per harness, then the rest bree relies on.
+      - name: Smoke test the image
+        run: |
+          podman-remote run --rm --user 1000:1000 \
+            --passwd-entry 'agent:*:1000:1000::/home/agent:/bin/bash' \
+            -e HOME=/home/agent --tmpfs /home/agent:rw,mode=1777 \
+            "$LOCAL" bash -euxc '
+              claude --version
+              pi --version
+              opencode --version
+              bree --version
+              podman --version
+              test "$(id -un)" = agent
+              test "$DISABLE_AUTOUPDATER" = 1
+              test "$OPENCODE_DISABLE_AUTOUPDATE" = 1
+              grep -qx "1000:1001:64535" /etc/subuid
+              getcap /usr/bin/newuidmap | grep -q cap_setuid
+              test "$(stat -f -c %T /var/tmp)" != overlayfs
+              for c in git jq make diff find which less file ps ssh rg fd node; do
+                command -v "$c" >/dev/null
+              done
+            '
+
+      # The entry point as `bree run` starts it (design, "The container"): the
+      # fixture root read-only at /run/bree/roots/0, BREE_PROFILE set, an empty
+      # home. `bree entrypoint` renders the `home` profile there, then execs
+      # the checks, which compare the home with the expected tree that
+      # tests/render.rs checks too. The user is alice with the home
+      # /home/alice, as in the fixtures: the auto mode seed in settings.json
+      # names the state directory and the mounts under the home. The remote
+      # podman does not see the checkout, so both trees go into per-run
+      # volumes through `volume import`.
+      - name: Entry point renders the fixture root
+        run: |
+          set -eu
+          roots=bree-ci-roots-${{ forgejo.run_id }}
+          want=bree-ci-want-${{ forgejo.run_id }}
+          trap 'podman-remote volume rm -f "$roots" "$want" >/dev/null || true' EXIT
+          podman-remote volume create "$roots" >/dev/null
+          podman-remote volume create "$want" >/dev/null
+          tar -C tests/fixtures/roots/shared -c . | podman-remote volume import "$roots" -
+          tar -C tests/fixtures/render/home -c . | podman-remote volume import "$want" -
+          podman-remote run --rm --user 1000:1000 \
+            --passwd-entry 'alice:*:1000:1000::/home/alice:/bin/bash' \
+            -e HOME=/home/alice -e BREE_PROFILE=home \
+            --tmpfs /home/alice:rw,mode=1777 \
+            -v "$roots:/run/bree/roots/0:ro" -v "$want:/want:ro" \
+            "$LOCAL" bree entrypoint -- bash -euxc '
+              test "$CLAUDE_CONFIG_DIR" = /home/alice/.claude
+              diff -r --exclude=.bree-manifest.json --exclude=.local /want "$HOME"
+              test -s ~/.claude/.bree-manifest.json
+              test -s ~/.pi/agent/.bree-manifest.json
+              cmp ~/.claude/CLAUDE.md ~/.local/state/bree/rendered/claude/CLAUDE.md
+              test -s ~/.claude/skills/review-text/SKILL.md
+              jq -e . ~/.claude/settings.json >/dev/null
+              echo "entry point rendered the home profile"
+            '
+
+      # Only pushes and manual runs on main publish. REGISTRY_TOKEN is an
+      # Actions secret of the repository owner with write:package.
+      # This Forgejo serves the registry over plain HTTP, hence
+      # --tls-verify=false.
+      # :<version> and :<version>-<YYYYMMDD> move with every merge, and Forgejo
+      # drops a manifest when its tag is pushed again, so a digest pin on them
+      # breaks. :<version>-<YYYYMMDD>-<commit> is pushed only when the registry
+      # does not have it yet, so a rerun never replaces it and downstream
+      # images can pin it by digest.
+      - name: Push to the Forgejo registry
+        if: forgejo.event_name != 'pull_request' && forgejo.ref == 'refs/heads/main'
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          set -eu
+          test -n "$REGISTRY_TOKEN" || { echo "::error::secret REGISTRY_TOKEN is not set"; exit 1; }
+          registry=${SERVER_URL#*://}
+          registry=${registry%/}
+          image="$registry/$OWNER/bree-base"
+          version=$(target/release/bree --version | awk '{print $2}')
+          day=$(date -u +%Y%m%d)
+          commit=$(git rev-parse --short=12 HEAD)
+          fixed="$version-$day-$commit"
+          # Does the registry have :$fixed? A pull token for the repository
+          # (Docker token auth, as podman login does), then the manifest.
+          token=$(curl -sSf -u "$OWNER:$REGISTRY_TOKEN" \
+            "$SERVER_URL/v2/token?service=container_registry&scope=repository:$OWNER/bree-base:pull" |
+            jq -er .token)
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -I \
+            -H "Authorization: Bearer $token" \
+            -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+            "$SERVER_URL/v2/$OWNER/bree-base/manifests/$fixed")
+          case $code in
+            200) tags="$version $version-$day"
+                 echo "$image:$fixed exists, not pushing it again" ;;
+            404) tags="$version $version-$day $fixed" ;;
+            *) echo "::error::manifest query for $fixed returned HTTP $code"; exit 1 ;;
+          esac
+          printf '%s' "$REGISTRY_TOKEN" |
+            podman-remote login --tls-verify=false -u "$OWNER" --password-stdin "$registry"
+          for tag in $tags; do
+            podman-remote push --tls-verify=false "$LOCAL" "docker://$image:$tag"
+            echo "pushed $image:$tag"
+          done
+          podman-remote logout "$registry"
+
+      - name: Remove the per-run image
+        if: always()
+        run: |
+          podman-remote rmi --force "$LOCAL" || true
+          podman-remote image prune -f || true

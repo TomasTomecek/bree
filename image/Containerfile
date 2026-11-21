@@ -1,0 +1,82 @@
+# bree-base: the generic image bree runs a harness in (docs/design.md, "Base
+# image" and "The container"). Fedora, the pinned harnesses, nested rootless
+# podman and the tools the harnesses call; nothing personal: no user, no git
+# identity, no configuration. bree renders the configuration into the home at
+# start.
+#
+# The build context is this directory plus the `bree` executable next to this
+# file: `bree image build` copies itself there, CI copies the binary it built.
+FROM fedora:45
+
+# git-core ... less, procps-ng, openssh-clients: what the harnesses call.
+# nodejs-full-i18n: Fedora's node is built with small ICU and segfaults on
+# Intl.Segmenter (used by pi's TUI) without the full data, a weak dependency.
+# fd-find, ripgrep: pi's find and grep tools; without them pi downloads them
+# from GitHub on start.
+# podman: nested rootless containers. rpm --setcaps: the fedora base image
+# loses the file caps on newuidmap and newgidmap (rhbz#1995337), which nested
+# podman needs; quay.io/podman/stable does the same.
+RUN dnf install -y --setopt=install_weak_deps=False \
+        git-core jq make diffutils findutils which less file procps-ng \
+        openssh-clients \
+        podman \
+        nodejs npm nodejs-full-i18n \
+        fd-find ripgrep \
+    && dnf clean all \
+    && rpm --setcaps shadow-utils
+
+# Claude Code, pinned by the installer's version argument; a bump is a
+# reviewed one-line change. The installer puts a versioned binary under /root:
+# keep only the binary, since /root is not the user's home here.
+# DISABLE_AUTOUPDATER keeps the running CLI at the pin.
+ARG CLAUDE_CODE_VERSION=2.1.326
+ENV DISABLE_AUTOUPDATER=1
+RUN curl -fsSL https://claude.ai/install.sh | bash -s "$CLAUDE_CODE_VERSION" \
+    && install -m 0755 "$(readlink -f /root/.local/bin/claude)" /usr/local/bin/claude \
+    && rm -rf /root/.local/bin/claude /root/.local/share/claude /root/.claude /root/.claude.json \
+    && claude --version | grep -qF "$CLAUDE_CODE_VERSION "
+
+# pi, pinned. It needs node >= 22.19.
+ARG PI_VERSION=1.4.0
+RUN node -e 'const [a, b] = process.versions.node.split(".").map(Number); \
+        if (a < 22 || (a === 22 && b < 19)) { console.error("pi needs node >= 22.19, got " + process.version); process.exit(1); }' \
+    && npm install -g --ignore-scripts "@earendil-works/pi-coding-agent@$PI_VERSION" \
+    && npm cache clean --force \
+    && pi --version
+
+# opencode 2 (@opencode/cli; opencode-ai is the 1.x line), pinned. Its
+# postinstall swaps bin/opencode.exe for the native binary from the matching
+# @opencode/cli-linux-* package, so it cannot take --ignore-scripts like pi.
+ARG OPENCODE_VERSION=2.2.6
+ENV OPENCODE_DISABLE_AUTOUPDATE=1
+RUN npm install -g "@opencode/cli@$OPENCODE_VERSION" \
+    && npm cache clean --force \
+    && opencode --version
+
+# Nested podman, copied from quay.io/podman/stable. The image has no home of its own (bree mounts the profile's state
+# directory there), so the settings that were per user in the home move to
+# /etc/containers: rootless podman reads the driver and its options from the
+# system storage.conf and keeps its graphroot under the home, on the storage
+# volume bree mounts.
+COPY containers/containers.conf /etc/containers/containers.conf
+COPY containers/storage.conf /etc/containers/storage.conf
+
+# bree runs the container as uid 1000 (--userns=keep-id:uid=1000,gid=1000) and
+# adds the user's passwd entry at run time (--passwd-entry), so no user is
+# named here. The nested ranges fit inside the outer keep-id map and skip uid
+# 1000, as in quay.io/podman/stable; subuid(5) allows the uid by number.
+RUN printf '1000:1:999\n1000:1001:64535\n' | tee /etc/subuid > /etc/subgid
+
+# `podman build` inside the nested setup.
+ENV BUILDAH_ISOLATION=chroot
+
+# Since podman 6 (Fedora 45), `podman build` mounts an overlay over the build
+# context with its upper directory under /var/tmp, and the kernel refuses an
+# overlay upper directory on the container's own overlay root ("invalid
+# argument"). A volume puts /var/tmp on the host's filesystem; `bree run`
+# passes --rm, which removes the anonymous volume with the container.
+VOLUME /var/tmp
+
+# The bree that built the image. Its `bree entrypoint` renders the profile and
+# starts the harness; `bree run` passes it as the command (Task 9).
+COPY --chmod=0755 bree /usr/local/bin/bree

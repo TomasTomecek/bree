@@ -1,0 +1,20 @@
+{
+  "skipAutoPermissionPrompt": true,
+  "autoMode": {
+    "environment": [
+      "$defaults",
+      "Claude Code runs in a rootless podman container that bree started, for the bree profile work. The user namespace is keep-id: uid 1000 in the container is the host user. The home directory ~ is bree's state directory of this profile (/home/alice/.local/share/bree/state/work on the host), not the host user's home. Files under ~ are this container's state, except under the mounts described below. The host path /home/alice/src is mounted at /home/alice/src, read-write. Changes there are real changes on the host. The host path /home/alice/.gitconfig is mounted at /home/alice/.gitconfig, read-only (optional). The bree config roots are mounted read-only under /run/bree/roots. bree run -m adds more host mounts for that run, read-write unless given as ro. The working directory is the host directory bree run was started in, inside one of the mounts above or else mounted read-write at the same path. Changes there are real changes on the host, unless a read-only mount holds it. The network is pasta: the container has its own network namespace with outbound internet access, and the host's local network is reachable. Rootless podman works inside the container, with its storage in the podman volume bree-work-containers at ~/.local/share/containers. Containers started there stay inside this container. A credential reaches the container as the environment variables CORP_KEY and ANTHROPIC_API_KEY, when its source is available. The values of credentials are never written here."
+    ]
+  },
+  "env": {
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "example/big-model",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "example/big-model",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "example/small-model"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(cargo test)"
+    ]
+  },
+  "includeCoAuthoredBy": false
+}

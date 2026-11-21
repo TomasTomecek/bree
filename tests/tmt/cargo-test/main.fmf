@@ -1,0 +1,7 @@
+summary: cargo test, from the source tree
+test: ./test.sh
+duration: 30m
+require:
+  - cargo
+  - gcc
+  - git
