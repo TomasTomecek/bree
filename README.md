@@ -1,3 +1,5 @@
+![The village of Bree at a crossroads, travellers arriving](docs/bree.jpg)
+
 # `bree`
 
 Runtime for your local agents. With profiles and agents running in containers.
