@@ -111,8 +111,6 @@ Walters](https://github.com/cgwalters):
   which runs agents as CI jobs and keeps provider keys off the agent's machine
   behind a credential broker. bree has a `broker` secret source for it.
 
-agenthome has no license, so nothing from it is copied here.
-
 ## Building the RPM
 
 `bree.spec` builds offline from the vendored crates, so mock needs no network
@@ -131,3 +129,9 @@ sudo dnf install /var/lib/mock/fedora-44-x86_64/result/bree-*.x86_64.rpm
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+## Note
+
+The history is flat because while we developed this tool with my agents
+internally, the history had a ton of internal names so I decided it to squash
+it.
