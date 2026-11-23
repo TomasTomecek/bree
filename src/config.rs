@@ -276,7 +276,8 @@ pub mod testutil {
     }
 
     /// An environment for tests: home /home/alice, cwd /home/alice/src/shared, user
-    /// alice, `/etc/localtime` present, every path existing.
+    /// alice, `/etc/localtime` present, every path existing except the host's
+    /// gws login, which a test adds when it wants the automatic mounts.
     pub fn env() -> Env {
         Env {
             home: PathBuf::from("/home/alice"),
@@ -284,7 +285,7 @@ pub mod testutil {
             user: "alice".to_string(),
             vars: HashMap::new(),
             localtime_exists: true,
-            path_exists: Box::new(|_| true),
+            path_exists: Box::new(|p| !p.starts_with("/home/alice/.config/gws")),
             relative_to: None,
         }
     }

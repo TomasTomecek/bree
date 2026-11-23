@@ -174,6 +174,22 @@ fn describe_source(s: &Secret) -> String {
     }
 }
 
+/// The host's gws login files to mount: the plaintext credentials, and the
+/// encrypted pair when both it and the key file are present. The token cache
+/// stays in the container home, so gws can refresh it without writing the
+/// host's files.
+fn gws_login(home: &Path, env: &Env) -> Vec<&'static str> {
+    let dir = home.join(".config/gws");
+    let mut files = Vec::new();
+    if env.exists(&dir.join("credentials.json")) {
+        files.push("credentials.json");
+    }
+    if env.exists(&dir.join("credentials.enc")) && env.exists(&dir.join(".encryption_key")) {
+        files.extend(["credentials.enc", ".encryption_key"]);
+    }
+    files
+}
+
 /// Reads a secret's value from its source: `None` when it is not available
 /// (variable unset or empty, file missing or empty).
 pub fn read_secret(secret: &Secret, env: &Env) -> Result<Option<String>> {
@@ -516,6 +532,23 @@ pub fn build(
     }
     vols.extend(user);
     vols.extend(secret_mounts);
+    // gws is in the base image; share the host's login when it has one. A
+    // profile mount at the same destination wins, so a profile can replace it.
+    let gws_dir = home.join(".config/gws");
+    for name in gws_login(home, env) {
+        let dest = gws_dir.join(name);
+        if vols.iter().any(|v| v.dest == dest) {
+            continue;
+        }
+        vols.push(Vol {
+            src: gws_dir.join(name).display().to_string(),
+            dest,
+            read_only: true,
+            relabel: false,
+            volume: false,
+            origin: format!("the host's gws login ({name})"),
+        });
+    }
     let mut seen: HashMap<&Path, &str> = HashMap::new();
     for v in &vols {
         if let Some(first) = seen.insert(&v.dest, &v.origin) {
@@ -999,6 +1032,69 @@ podman run --rm -it --init
         );
         assert!(vs[vs.len() - 2].contains("/srv/z"), "{vs:?}");
         assert!(inv.env.is_empty());
+    }
+
+    #[test]
+    fn host_gws_login_is_mounted_read_only() {
+        let mut e = env();
+        e.path_exists = Box::new(|p| p.starts_with("/home/alice/.config/gws"));
+        let p = load(&minimal(""), "p", &e);
+        let inv = try_build(&p, &opts(), &e).unwrap();
+        let vs: Vec<_> = lines(&inv)
+            .into_iter()
+            .filter(|l| l.contains("-v "))
+            .collect();
+        for name in ["credentials.json", "credentials.enc", ".encryption_key"] {
+            let path = format!("/home/alice/.config/gws/{name}");
+            assert!(
+                vs.contains(&format!("  -v {path}:{path}:ro")),
+                "{name} is not mounted read-only: {vs:?}"
+            );
+        }
+        assert_eq!(
+            vs.last().unwrap(),
+            "  -v /home/alice/.config/gws/.encryption_key:/home/alice/.config/gws/.encryption_key:ro"
+        );
+    }
+
+    #[test]
+    fn host_gws_encrypted_login_needs_the_key_file() {
+        for present in [["credentials.enc"], [".encryption_key"]] {
+            let mut e = env();
+            let only = format!("/home/alice/.config/gws/{}", present[0]);
+            e.path_exists = Box::new(move |p| p == Path::new(&only));
+            let p = load(&minimal(""), "p", &e);
+            let inv = try_build(&p, &opts(), &e).unwrap();
+            assert!(
+                !lines(&inv).iter().any(|l| l.contains("/.config/gws/")),
+                "{} alone is mounted: {}",
+                present[0],
+                inv.render()
+            );
+        }
+    }
+
+    #[test]
+    fn profile_mount_wins_over_the_host_gws_login() {
+        let mut e = env();
+        e.path_exists =
+            Box::new(|p| p.starts_with("/home/alice/.config/gws") || p == Path::new("/srv/gws"));
+        let p = load(
+            &minimal(
+                "mounts:\n  - host: /srv/gws\n    container: ~/.config/gws/credentials.json\n",
+            ),
+            "p",
+            &e,
+        );
+        let inv = try_build(&p, &opts(), &e).unwrap();
+        let ls = lines(&inv);
+        assert!(
+            ls.contains(&"  -v /srv/gws:/home/alice/.config/gws/credentials.json:z".to_string())
+        );
+        assert!(!ls.contains(
+            &"  -v /home/alice/.config/gws/credentials.json:/home/alice/.config/gws/credentials.json:ro"
+                .to_string()
+        ));
     }
 
     #[test]

@@ -267,8 +267,8 @@ The container's home is the profile's state directory,
 `~/.local/share/bree/state/home/`, mounted at the host home's path. The harness
 keeps its login and sessions there between runs, so the first run asks you to
 log in once. Your real home never reaches the container, only the profile's
-mounts and the current directory do. `--dry-run` prints the podman command
-without running it:
+mounts, the current directory and the host's gws login do. `--dry-run` prints
+the podman command without running it:
 
 ```
 $ bree -p home run --dry-run

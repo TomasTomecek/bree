@@ -53,6 +53,25 @@ RUN npm install -g "@opencode/cli@$OPENCODE_VERSION" \
     && npm cache clean --force \
     && opencode --version
 
+# gws (googleworkspace/cli), pinned by the release version. The archives are
+# per architecture and the musl build is static, so it runs on this glibc image
+# and on downstream images whatever their libc. Only the binary goes in; gws
+# reads Google's Discovery service at runtime.
+ARG GWS_VERSION=0.22.5
+RUN machine=$(uname -m) \
+    && case "$machine" in \
+         x86_64) sha=4db473dde4b1ab872e4ff35d769b0d4af1f1a6441a605e79d5cf8ada9c87e920 ;; \
+         aarch64) sha=e700fe63524932b10ec2130b47ece90aa850e66005fe52ccfc4cf8767bf9919a ;; \
+         *) echo "gws: unsupported architecture $machine" >&2; exit 1 ;; \
+       esac \
+    && curl -fsSLo /tmp/gws.tar.gz \
+        "https://github.com/googleworkspace/cli/releases/download/v$GWS_VERSION/google-workspace-cli-$machine-unknown-linux-musl.tar.gz" \
+    && echo "$sha  /tmp/gws.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/gws.tar.gz -C /tmp ./gws \
+    && install -m 0755 /tmp/gws /usr/local/bin/gws \
+    && rm -rf /tmp/gws /tmp/gws.tar.gz \
+    && gws --version | grep -qxF "gws $GWS_VERSION"
+
 # Nested podman, copied from quay.io/podman/stable. The image has no home of its own (bree mounts the profile's state
 # directory there), so the settings that were per user in the home move to
 # /etc/containers: rootless podman reads the driver and its options from the
