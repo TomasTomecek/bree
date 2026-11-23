@@ -87,6 +87,7 @@ jobs:
               claude --version
               pi --version
               opencode --version
+              gws --version
               bree --version
               podman --version
               test "$(id -un)" = agent

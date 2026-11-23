@@ -23,7 +23,8 @@ bree -p home check --target host # exit 1 when rendered files are stale
 
 - **The agent does not get your home.** The container's home is a state
   directory of the profile. Your real home never reaches the container: only
-  the mounts the profile names and the current directory do.
+  the mounts the profile names, the current directory and the host's gws login
+  do.
 - **One tool, several setups.** A profile says which blocks, which harness,
   which inference pool, and which mounts, secrets and network the container
   gets, so `work` and `home` are two profiles of the same tool, not two
