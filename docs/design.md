@@ -730,7 +730,7 @@ written even if the profile lists no Claude settings blocks, and `tiers.yaml`
 
 For Claude Code on the container target, the renderer also tells Claude Code's
 auto mode classifier that it runs in a bree container, so that it judges a
-command knowing what is real and what is scratch. Claude Code 2.1.326, the
+command knowing what is real and what is scratch. Claude Code 2.1.331, the
 version the base image pins, reads these settings from the user settings:
 `skipAutoPermissionPrompt` (the user accepted the auto mode opt-in dialog) and
 the lists of strings `autoMode.environment`, `autoMode.allow` and

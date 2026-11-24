@@ -29,7 +29,7 @@ RUN dnf install -y --setopt=install_weak_deps=False \
 # reviewed one-line change. The installer puts a versioned binary under /root:
 # keep only the binary, since /root is not the user's home here.
 # DISABLE_AUTOUPDATER keeps the running CLI at the pin.
-ARG CLAUDE_CODE_VERSION=2.1.326
+ARG CLAUDE_CODE_VERSION=2.1.331
 ENV DISABLE_AUTOUPDATER=1
 RUN curl -fsSL https://claude.ai/install.sh | bash -s "$CLAUDE_CODE_VERSION" \
     && install -m 0755 "$(readlink -f /root/.local/bin/claude)" /usr/local/bin/claude \
