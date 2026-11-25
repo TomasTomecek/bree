@@ -611,10 +611,10 @@ Mounts, in this order: the state directory as home, each config root read-only
 under `/run/bree/roots/<n>`, the nested storage volume, then the profile's
 mounts, the working directory and `--mount` from the command line, sorted by
 container path so a parent comes before what is under it, and last the
-file-secret mounts, the host's gws login and the host's netrc. A destination
-given twice is an error, except that the working directory is skipped when a
-mount already covers it, and a host login is skipped when a mount already has
-its destination.
+file-secret mounts, the host's gws login, jira-cli's netrc and the host's gh
+config. A destination given twice is an error, except that the working
+directory is skipped when a mount already covers it, and an automatic host
+mount is skipped when a mount already has its destination.
 
 Before it execs podman, `bree run` creates every destination that lies in the
 state directory and not inside another mount, as the host user: a directory, or
@@ -1059,6 +1059,16 @@ under the container home when it exists; jira-cli reads its API token from
 there. A profile mount or file secret at that destination replaces the
 automatic mount.
 
+`bree run` also shares the host's gh configuration and login with the
+container when they are there: `~/.config/gh/config.yml` and
+`~/.config/gh/hosts.yml` are mounted read-only at the same paths under the
+container home. `hosts.yml` holds the host's accounts and, unless gh keeps the
+token in the system keyring, the API tokens. The container has no keyring, so a
+profile that needs a token stored only there has to provide it as a secret.
+gh's device id and other state stay in the state directory, so gh writes there
+and not to the host. A profile mount or file secret at either destination
+replaces the automatic mount.
+
 `broker` is the source for an unattended job that spends through the credential
 broker agentic-job uses for inference, so that the job never holds the provider
 key. It needs `url`, `token` and `route: anthropic`, takes `env` for extra
@@ -1106,6 +1116,8 @@ with the broker and passes its short-lived token instead, are the later step.
   now, until the base image can be extended per profile (issue #2);
 - `jira-cli` (ankitpokhrel/jira-cli), pinned by release version for the same
   reason; its API token comes from the host's netrc;
+- `gh` (GitHub CLI), from Fedora's `gh` package, for GitHub work; its config
+  and login come from the host;
 - the `bree` binary itself as the entry point.
 
 The Containerfile is in the repository at `image/Containerfile` and is compiled

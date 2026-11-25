@@ -9,6 +9,7 @@
 FROM fedora:45
 
 # git-core ... less, procps-ng, openssh-clients: what the harnesses call.
+# gh: the GitHub CLI, for GitHub work.
 # nodejs-full-i18n: Fedora's node is built with small ICU and segfaults on
 # Intl.Segmenter (used by pi's TUI) without the full data, a weak dependency.
 # fd-find, ripgrep: pi's find and grep tools; without them pi downloads them
@@ -18,7 +19,7 @@ FROM fedora:45
 # podman needs; quay.io/podman/stable does the same.
 RUN dnf install -y --setopt=install_weak_deps=False \
         git-core jq make diffutils findutils which less file procps-ng \
-        openssh-clients \
+        openssh-clients gh \
         podman \
         nodejs npm nodejs-full-i18n \
         fd-find ripgrep \

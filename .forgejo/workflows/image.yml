@@ -89,6 +89,7 @@ jobs:
               opencode --version
               gws --version
               jira version
+              gh --version
               bree --version
               podman --version
               test "$(id -un)" = agent

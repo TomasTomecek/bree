@@ -175,13 +175,13 @@ fn describe_source(s: &Secret) -> String {
 }
 
 /// The host's logins for the tools in the image: gws's plaintext credentials,
-/// or its encrypted pair when both files are present, and jira-cli's `~/.netrc`.
-/// They are mounted at the same path under the container home; gws's token
-/// cache stays in the state directory, so a refresh writes there and not to the
-/// host.
+/// or its encrypted pair when both files are present, jira-cli's `~/.netrc`,
+/// and gh's configuration and hosts files. They are mounted at the same path
+/// under the container home; gws's token cache and gh's state stay in the
+/// state directory, so refreshes write there and not to the host.
 fn host_logins(home: &Path, env: &Env) -> Vec<(PathBuf, String)> {
-    let gws = home.join(".config/gws");
     let mut files = Vec::new();
+    let gws = home.join(".config/gws");
     if env.exists(&gws.join("credentials.json")) {
         files.push((
             gws.join("credentials.json"),
@@ -189,18 +189,20 @@ fn host_logins(home: &Path, env: &Env) -> Vec<(PathBuf, String)> {
         ));
     }
     if env.exists(&gws.join("credentials.enc")) && env.exists(&gws.join(".encryption_key")) {
-        files.push((
-            gws.join("credentials.enc"),
-            "the host's gws login (credentials.enc)".to_string(),
-        ));
-        files.push((
-            gws.join(".encryption_key"),
-            "the host's gws login (.encryption_key)".to_string(),
-        ));
+        for name in ["credentials.enc", ".encryption_key"] {
+            files.push((gws.join(name), format!("the host's gws login ({name})")));
+        }
     }
     let netrc = home.join(".netrc");
     if env.exists(&netrc) {
         files.push((netrc, "the host's netrc (jira-cli login)".to_string()));
+    }
+    let gh = home.join(".config/gh");
+    for name in ["config.yml", "hosts.yml"] {
+        let path = gh.join(name);
+        if env.exists(&path) {
+            files.push((path, format!("the host's gh config ({name})")));
+        }
     }
     files
 }
@@ -547,16 +549,17 @@ pub fn build(
     }
     vols.extend(user);
     vols.extend(secret_mounts);
-    // gws and jira-cli are in the base image; share the host's logins when it
-    // has them. A profile mount at the same destination wins, so a profile can
-    // replace one.
+    // gws, jira-cli and gh are in the base image; share the host's logins
+    // when it has them. A profile mount at the same destination wins, so a
+    // profile can replace one.
     for (src, origin) in host_logins(home, env) {
-        if vols.iter().any(|v| v.dest == src) {
+        let dest = src.clone();
+        if vols.iter().any(|v| v.dest == dest) {
             continue;
         }
         vols.push(Vol {
             src: src.display().to_string(),
-            dest: src,
+            dest,
             read_only: true,
             relabel: false,
             volume: false,
@@ -1088,6 +1091,29 @@ podman run --rm -it --init
     }
 
     #[test]
+    fn host_gh_config_and_login_are_mounted_read_only() {
+        let mut e = env();
+        e.path_exists = Box::new(|p| p.starts_with("/home/alice/.config/gh"));
+        let p = load(&minimal(""), "p", &e);
+        let inv = try_build(&p, &opts(), &e).unwrap();
+        let vs: Vec<_> = lines(&inv)
+            .into_iter()
+            .filter(|l| l.contains("-v "))
+            .collect();
+        for name in ["config.yml", "hosts.yml"] {
+            let path = format!("/home/alice/.config/gh/{name}");
+            assert!(
+                vs.contains(&format!("  -v {path}:{path}:ro")),
+                "{name} is not mounted read-only: {vs:?}"
+            );
+        }
+        assert_eq!(
+            vs.last().unwrap(),
+            "  -v /home/alice/.config/gh/hosts.yml:/home/alice/.config/gh/hosts.yml:ro"
+        );
+    }
+
+    #[test]
     fn host_gws_encrypted_login_needs_the_key_file() {
         for present in [["credentials.enc"], [".encryption_key"]] {
             let mut e = env();
@@ -1125,6 +1151,33 @@ podman run --rm -it --init
             &"  -v /home/alice/.config/gws/credentials.json:/home/alice/.config/gws/credentials.json:ro"
                 .to_string()
         ));
+    }
+
+    #[test]
+    fn profile_mount_wins_over_the_host_gh_config() {
+        let mut e = env();
+        e.path_exists =
+            Box::new(|p| p.starts_with("/home/alice/.config/gh") || p == Path::new("/srv/gh"));
+        let p = load(
+            &minimal("mounts:\n  - host: /srv/gh\n    container: ~/.config/gh/hosts.yml\n"),
+            "p",
+            &e,
+        );
+        let inv = try_build(&p, &opts(), &e).unwrap();
+        let ls = lines(&inv);
+        assert!(ls.contains(&"  -v /srv/gh:/home/alice/.config/gh/hosts.yml:z".to_string()));
+        assert!(
+            !ls.contains(
+                &"  -v /home/alice/.config/gh/hosts.yml:/home/alice/.config/gh/hosts.yml:ro"
+                    .to_string()
+            )
+        );
+        assert!(
+            ls.contains(
+                &"  -v /home/alice/.config/gh/config.yml:/home/alice/.config/gh/config.yml:ro"
+                    .to_string()
+            )
+        );
     }
 
     #[test]
