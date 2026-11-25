@@ -611,10 +611,10 @@ Mounts, in this order: the state directory as home, each config root read-only
 under `/run/bree/roots/<n>`, the nested storage volume, then the profile's
 mounts, the working directory and `--mount` from the command line, sorted by
 container path so a parent comes before what is under it, and last the
-file-secret mounts and the host's gws login. A destination given twice is an
-error, except that the working directory is skipped when a mount already covers
-it, and the host's gws login is skipped when a mount already has its
-destination.
+file-secret mounts, the host's gws login and the host's netrc. A destination
+given twice is an error, except that the working directory is skipped when a
+mount already covers it, and a host login is skipped when a mount already has
+its destination.
 
 Before it execs podman, `bree run` creates every destination that lies in the
 state directory and not inside another mount, as the host user: a directory, or
@@ -1054,6 +1054,11 @@ home. gws's token cache stays in the state directory, so a refresh writes there
 and not to the host. A profile mount or file secret at one of those
 destinations replaces the automatic mount.
 
+For jira-cli, `bree run` mounts the host's `~/.netrc` read-only at the same path
+under the container home when it exists; jira-cli reads its API token from
+there. A profile mount or file secret at that destination replaces the
+automatic mount.
+
 `broker` is the source for an unattended job that spends through the credential
 broker agentic-job uses for inference, so that the job never holds the provider
 key. It needs `url`, `token` and `route: anthropic`, takes `env` for extra
@@ -1099,6 +1104,8 @@ with the broker and passes its short-lived token instead, are the later step.
   full ICU;
 - `gws` (googleworkspace/cli), pinned by release version; a generic tool for
   now, until the base image can be extended per profile (issue #2);
+- `jira-cli` (ankitpokhrel/jira-cli), pinned by release version for the same
+  reason; its API token comes from the host's netrc;
 - the `bree` binary itself as the entry point.
 
 The Containerfile is in the repository at `image/Containerfile` and is compiled

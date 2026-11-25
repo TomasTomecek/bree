@@ -174,18 +174,33 @@ fn describe_source(s: &Secret) -> String {
     }
 }
 
-/// The host's gws login files to mount: the plaintext credentials, and the
-/// encrypted pair when both it and the key file are present. The token cache
-/// stays in the container home, so gws can refresh it without writing the
-/// host's files.
-fn gws_login(home: &Path, env: &Env) -> Vec<&'static str> {
-    let dir = home.join(".config/gws");
+/// The host's logins for the tools in the image: gws's plaintext credentials,
+/// or its encrypted pair when both files are present, and jira-cli's `~/.netrc`.
+/// They are mounted at the same path under the container home; gws's token
+/// cache stays in the state directory, so a refresh writes there and not to the
+/// host.
+fn host_logins(home: &Path, env: &Env) -> Vec<(PathBuf, String)> {
+    let gws = home.join(".config/gws");
     let mut files = Vec::new();
-    if env.exists(&dir.join("credentials.json")) {
-        files.push("credentials.json");
+    if env.exists(&gws.join("credentials.json")) {
+        files.push((
+            gws.join("credentials.json"),
+            "the host's gws login (credentials.json)".to_string(),
+        ));
     }
-    if env.exists(&dir.join("credentials.enc")) && env.exists(&dir.join(".encryption_key")) {
-        files.extend(["credentials.enc", ".encryption_key"]);
+    if env.exists(&gws.join("credentials.enc")) && env.exists(&gws.join(".encryption_key")) {
+        files.push((
+            gws.join("credentials.enc"),
+            "the host's gws login (credentials.enc)".to_string(),
+        ));
+        files.push((
+            gws.join(".encryption_key"),
+            "the host's gws login (.encryption_key)".to_string(),
+        ));
+    }
+    let netrc = home.join(".netrc");
+    if env.exists(&netrc) {
+        files.push((netrc, "the host's netrc (jira-cli login)".to_string()));
     }
     files
 }
@@ -532,21 +547,20 @@ pub fn build(
     }
     vols.extend(user);
     vols.extend(secret_mounts);
-    // gws is in the base image; share the host's login when it has one. A
-    // profile mount at the same destination wins, so a profile can replace it.
-    let gws_dir = home.join(".config/gws");
-    for name in gws_login(home, env) {
-        let dest = gws_dir.join(name);
-        if vols.iter().any(|v| v.dest == dest) {
+    // gws and jira-cli are in the base image; share the host's logins when it
+    // has them. A profile mount at the same destination wins, so a profile can
+    // replace one.
+    for (src, origin) in host_logins(home, env) {
+        if vols.iter().any(|v| v.dest == src) {
             continue;
         }
         vols.push(Vol {
-            src: gws_dir.join(name).display().to_string(),
-            dest,
+            src: src.display().to_string(),
+            dest: src,
             read_only: true,
             relabel: false,
             volume: false,
-            origin: format!("the host's gws login ({name})"),
+            origin,
         });
     }
     let mut seen: HashMap<&Path, &str> = HashMap::new();
@@ -1054,6 +1068,22 @@ podman run --rm -it --init
         assert_eq!(
             vs.last().unwrap(),
             "  -v /home/alice/.config/gws/.encryption_key:/home/alice/.config/gws/.encryption_key:ro"
+        );
+    }
+
+    #[test]
+    fn host_netrc_is_mounted_read_only() {
+        let mut e = env();
+        e.path_exists = Box::new(|p| p == Path::new("/home/alice/.netrc"));
+        let p = load(&minimal(""), "p", &e);
+        let inv = try_build(&p, &opts(), &e).unwrap();
+        let vs: Vec<_> = lines(&inv)
+            .into_iter()
+            .filter(|l| l.contains("-v "))
+            .collect();
+        assert_eq!(
+            vs.last().unwrap(),
+            "  -v /home/alice/.netrc:/home/alice/.netrc:ro"
         );
     }
 

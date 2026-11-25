@@ -72,6 +72,25 @@ RUN machine=$(uname -m) \
     && rm -rf /tmp/gws /tmp/gws.tar.gz \
     && gws --version | grep -qxF "gws $GWS_VERSION"
 
+# jira-cli, pinned by release version. The releases are per architecture and
+# the Go binary is static, so it needs no runtime libraries. The API token comes
+# from the host's ~/.netrc, which `bree run` mounts; the configuration is the
+# profile's.
+ARG JIRA_CLI_VERSION=1.7.0
+RUN machine=$(uname -m) \
+    && case "$machine" in \
+         x86_64) arch=x86_64 sha=b5e0ba4804f3f11f92c483d9a6ea9ebccec1c735cd2e12b0440cab9d7afd626a ;; \
+         aarch64) arch=arm64 sha=80aa3cc02790892b29e1580a8e49eb49a6550815b362c5ef8c05aea1dee73a95 ;; \
+         *) echo "jira-cli: unsupported architecture $machine" >&2; exit 1 ;; \
+       esac \
+    && curl -fsSLo /tmp/jira.tar.gz \
+        "https://github.com/ankitpokhrel/jira-cli/releases/download/v$JIRA_CLI_VERSION/jira_${JIRA_CLI_VERSION}_linux_$arch.tar.gz" \
+    && echo "$sha  /tmp/jira.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/jira.tar.gz -C /tmp \
+    && install -m 0755 "/tmp/jira_${JIRA_CLI_VERSION}_linux_$arch/bin/jira" /usr/local/bin/jira \
+    && rm -rf /tmp/jira.tar.gz "/tmp/jira_${JIRA_CLI_VERSION}_linux_$arch" \
+    && jira version | grep -qF "Version=\"$JIRA_CLI_VERSION\""
+
 # Nested podman, copied from quay.io/podman/stable. The image has no home of its own (bree mounts the profile's state
 # directory there), so the settings that were per user in the home move to
 # /etc/containers: rootless podman reads the driver and its options from the
