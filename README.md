@@ -24,7 +24,8 @@ bree -p home check --target host # exit 1 when rendered files are stale
 - **The agent does not get your home.** The container's home is a state
   directory of the profile. Your real home never reaches the container: only
   the mounts the profile names, the current directory, the host's gws login,
-  jira-cli's netrc and gh config do.
+  jira-cli's netrc and gh config, and the host's `~/.ssh` when the profile asks
+  for it, do.
 - **One tool, several setups.** A profile says which blocks, which harness,
   which inference pool, and which mounts, secrets and network the container
   gets, so `work` and `home` are two profiles of the same tool, not two

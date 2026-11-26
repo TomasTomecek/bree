@@ -482,6 +482,7 @@ and its default:
 | `container.nested-podman` | bool | `true` | `label=disable` plus a per-profile storage volume `bree-<profile>-containers`. |
 | `container.label-disable` | bool | `false` | `label=disable` without the nested storage volume that `nested-podman: true` adds. |
 | `container.kvm` | bool | `false` | Pass `/dev/kvm` (and `unmask=ALL`) for VM tests inside. |
+| `container.ssh` | `off`, `ro` | `off` | `ro` bind-mounts the host's `~/.ssh` read-only at the same path under the container home. |
 | `container.workdir` | `cwd`, `mount` | `cwd` | `cwd` mounts the current directory at the same path. `mount` requires it to be inside a configured mount and adds no mount of its own. |
 | `container.tz` | `local`, a zone name | `local` | `--tz`; `local` is skipped on a host without `/etc/localtime`. |
 | `container.env` | map of strings | `{}` | Plain, non-secret environment variables for the container. |
@@ -611,10 +612,11 @@ Mounts, in this order: the state directory as home, each config root read-only
 under `/run/bree/roots/<n>`, the nested storage volume, then the profile's
 mounts, the working directory and `--mount` from the command line, sorted by
 container path so a parent comes before what is under it, and last the
-file-secret mounts, the host's gws login, jira-cli's netrc and the host's gh
-config. A destination given twice is an error, except that the working
-directory is skipped when a mount already covers it, and an automatic host
-mount is skipped when a mount already has its destination.
+file-secret mounts, the host's gws login, jira-cli's netrc, the host's gh
+config and, with `container.ssh: ro`, the host's `~/.ssh`. A destination given
+twice is an error, except that the working directory is skipped when a mount
+already covers it, and an automatic host mount is skipped when a mount already
+has its destination.
 
 Before it execs podman, `bree run` creates every destination that lies in the
 state directory and not inside another mount, as the host user: a directory, or
@@ -1068,6 +1070,14 @@ profile that needs a token stored only there has to provide it as a secret.
 gh's device id and other state stay in the state directory, so gh writes there
 and not to the host. A profile mount or file secret at either destination
 replaces the automatic mount.
+
+`container.ssh: ro` shares the host's `~/.ssh` directory with the container:
+bree mounts it read-only at the same path under the container home, so git and
+ssh read the host's keys, `config` and `known_hosts` and cannot change them.
+A profile mount or file secret at that destination replaces the automatic
+mount. It is off by default, and `ro` is the only mode: the container never
+writes to the host's ssh directory. A profile that turns it on needs the
+directory on the host; a missing `~/.ssh` is an error.
 
 `broker` is the source for an unattended job that spends through the credential
 broker agentic-job uses for inference, so that the job never holds the provider
