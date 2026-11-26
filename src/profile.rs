@@ -224,6 +224,15 @@ impl<'de> Deserialize<'de> for Kvm {
     }
 }
 
+/// `container.ssh`: `off`, or `ro` to mount the host's `~/.ssh` read-only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Ssh {
+    #[default]
+    Off,
+    Ro,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case", default)]
 pub struct Container {
@@ -232,6 +241,7 @@ pub struct Container {
     /// `label=disable` without the nested storage volume.
     pub label_disable: bool,
     pub kvm: Kvm,
+    pub ssh: Ssh,
     pub workdir: Workdir,
     pub tz: String,
     pub env: Ordered<String>,
@@ -249,6 +259,7 @@ impl Default for Container {
             nested_podman: true,
             label_disable: false,
             kvm: Kvm::Off,
+            ssh: Ssh::Off,
             workdir: Workdir::Cwd,
             tz: "local".to_string(),
             env: Ordered(Vec::new()),
@@ -1123,6 +1134,7 @@ mod tests {
         assert_eq!(p.container.network, Network::Pasta);
         assert!(p.container.nested_podman);
         assert_eq!(p.container.kvm, Kvm::Off);
+        assert_eq!(p.container.ssh, Ssh::Off);
         assert_eq!(p.container.workdir, Workdir::Cwd);
         assert_eq!(p.container.tz, "local");
         assert_eq!(p.container.pass_env, ["TERM"]);
@@ -1599,6 +1611,17 @@ mod tests {
         fails(
             &with("container:\n  kvm: yes\n"),
             "p.yaml:3: container.kvm: expected true, false or optional, found `yes`",
+        );
+    }
+
+    #[test]
+    fn container_ssh_is_off_or_ro() {
+        assert_eq!(parse(&with("")).unwrap().container.ssh, Ssh::Off);
+        let p = parse(&with("container:\n  ssh: ro\n")).unwrap();
+        assert_eq!(p.container.ssh, Ssh::Ro);
+        fails(
+            &with("container:\n  ssh: rw\n"),
+            "container.ssh: unknown variant `rw`",
         );
     }
 

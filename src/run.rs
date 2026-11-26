@@ -13,7 +13,8 @@ use crate::cli::RunHarness;
 use crate::config::{Env, expand_tilde, normalize};
 use crate::error::{Error, Result};
 use crate::profile::{
-    BROKER_RESERVED_ENV, Harness, Kvm, MountSource, Profile, Secret, SecretSrc, Source, Workdir,
+    BROKER_RESERVED_ENV, Harness, Kvm, MountSource, Profile, Secret, SecretSrc, Source, Ssh,
+    Workdir,
 };
 
 pub struct RunOpts<'a> {
@@ -565,6 +566,28 @@ pub fn build(
             volume: false,
             origin,
         });
+    }
+    // The host's ssh keys and known hosts, when the profile asks for them.
+    // Read-only, so the container cannot change the host's keys.
+    if profile.container.ssh == Ssh::Ro {
+        let dir = home.join(".ssh");
+        if !env.exists(&dir) {
+            return Err(Error::new(format!(
+                "profile {}: container.ssh is ro but {} does not exist",
+                profile.name,
+                dir.display()
+            )));
+        }
+        if !vols.iter().any(|v| v.dest == dir) {
+            vols.push(Vol {
+                src: dir.display().to_string(),
+                dest: dir,
+                read_only: true,
+                relabel: false,
+                volume: false,
+                origin: "the host's ssh directory".to_string(),
+            });
+        }
     }
     let mut seen: HashMap<&Path, &str> = HashMap::new();
     for v in &vols {
@@ -1177,6 +1200,59 @@ podman run --rm -it --init
                 &"  -v /home/alice/.config/gh/config.yml:/home/alice/.config/gh/config.yml:ro"
                     .to_string()
             )
+        );
+    }
+
+    #[test]
+    fn container_ssh_ro_mounts_the_host_directory_read_only() {
+        let e = env();
+        let p = load(&minimal("  ssh: ro\n"), "p", &e);
+        let ls = lines(&try_build(&p, &opts(), &e).unwrap());
+        assert!(
+            ls.contains(&"  -v /home/alice/.ssh:/home/alice/.ssh:ro".to_string()),
+            "{ls:?}"
+        );
+    }
+
+    #[test]
+    fn container_ssh_is_off_by_default() {
+        let e = env();
+        let p = load(&minimal(""), "p", &e);
+        let ls = lines(&try_build(&p, &opts(), &e).unwrap());
+        assert!(!ls.iter().any(|l| l.contains(".ssh")), "{ls:?}");
+    }
+
+    #[test]
+    fn container_ssh_ro_needs_the_host_directory() {
+        let mut e = env();
+        e.path_exists = Box::new(|p| p != Path::new("/home/alice/.ssh"));
+        let p = load(&minimal("  ssh: ro\n"), "p", &e);
+        assert_eq!(
+            err(&p, &opts(), &e),
+            "profile p: container.ssh is ro but /home/alice/.ssh does not exist"
+        );
+    }
+
+    #[test]
+    fn profile_mount_wins_over_the_host_ssh_directory() {
+        let e = env();
+        let p = load(
+            &minimal("  ssh: ro\nmounts:\n  - host: /srv/ssh\n    container: ~/.ssh\n"),
+            "p",
+            &e,
+        );
+        let mut e = e;
+        e.path_exists =
+            Box::new(|p| p == Path::new("/srv/ssh") || p == Path::new("/home/alice/.ssh"));
+        let inv = try_build(&p, &opts(), &e).unwrap();
+        let ls = lines(&inv);
+        assert!(
+            ls.contains(&"  -v /srv/ssh:/home/alice/.ssh:z".to_string()),
+            "{ls:?}"
+        );
+        assert!(
+            !ls.contains(&"  -v /home/alice/.ssh:/home/alice/.ssh:ro".to_string()),
+            "{ls:?}"
         );
     }
 

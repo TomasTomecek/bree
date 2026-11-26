@@ -138,8 +138,8 @@ mounts:
 `rules`, `skills`, `commands`, `settings` and `files` lists name the blocks the
 profile uses, and nothing else is rendered. `mounts` are host paths the
 container sees, at the same path by default. The design's "Profiles" section
-lists every key, including the container options (network, nested podman, KVM),
-secrets and tiers.
+lists every key, including the container options (network, nested podman, KVM,
+ssh), secrets and tiers.
 
 The examples below run as the user `alice` with this root, in
 `~/src/project`.
@@ -267,8 +267,9 @@ The container's home is the profile's state directory,
 `~/.local/share/bree/state/home/`, mounted at the host home's path. The harness
 keeps its login and sessions there between runs, so the first run asks you to
 log in once. Your real home never reaches the container, only the profile's
-mounts, the current directory, the host's gws login, jira-cli's netrc and gh
-config do. `--dry-run` prints the podman command without running it:
+mounts, the current directory, the host's gws login, jira-cli's netrc, gh
+config and, when the profile sets `container.ssh: ro`, the host's `~/.ssh` do.
+`--dry-run` prints the podman command without running it:
 
 ```
 $ bree -p home run --dry-run
