@@ -291,6 +291,31 @@ podman run --rm -it --init
   bree entrypoint -- claude
 ```
 
+The base image carries `gh`, `jira` (jira-cli) and `gws`, and each one finds the
+host's login through those read-only mounts, when the host has one. A shell
+shows whether a login arrived:
+
+```
+$ bree -p home run shell -- -c 'gh auth status; jira me; gws --version'
+```
+
+`~/.ssh` is off by default. A profile turns it on with `container.ssh`, and the
+only mode is `ro`:
+
+```yaml
+description: "Home: personal rules"
+harness: claude
+rules: [core]
+container:
+  ssh: ro
+mounts:
+  - host: ~/src
+```
+
+With that, `git push` over ssh works from inside the container with the host's
+keys and `known_hosts`, and nothing in the container can change them. A profile
+with `container.ssh: ro` fails to start on a host without `~/.ssh`.
+
 `-m HOST[:CONTAINER][:ro]` adds a mount for one run, and `--env NAME` passes a
 host variable. The container renders the profile into its home on every start,
 so edit the blocks in the root, not the rendered files.

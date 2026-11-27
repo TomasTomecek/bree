@@ -75,9 +75,40 @@ bree -p home run             # build the image on first use, start Claude Code
 ```
 
 The first run builds the base image `bree-base` (Fedora with the three
-harnesses and nested podman), which takes a minute or two, and the harness asks
-you to log in once. The login and the sessions stay in the profile's state
-directory, `~/.local/share/bree/state/home/`, between runs.
+harnesses, nested podman and the `gh`, `jira` and `gws` command line tools),
+which takes a minute or two, and the harness asks you to log in once. The login
+and the sessions stay in the profile's state directory,
+`~/.local/share/bree/state/home/`, between runs.
+
+## What the agent can reach
+
+Besides the harnesses, the base image has three tools for the services an agent
+often needs, and `bree run` shares the host's login for each one read-only when
+it is there. The agent can use the login and cannot change it:
+
+| Tool | For | Shared from the host |
+|---|---|---|
+| `gh` | GitHub | `~/.config/gh/config.yml` and `hosts.yml` |
+| `jira` ([jira-cli](https://github.com/ankitpokhrel/jira-cli)) | Jira | `~/.netrc`, where jira-cli reads its API token |
+| `gws` ([googleworkspace/cli](https://github.com/googleworkspace/cli)) | Google Workspace | the credentials in `~/.config/gws/` |
+
+A login that is not on the host is not mounted, so a host without `gh` set up
+gets a container without a GitHub login. The container has no keyring: when
+`gh` keeps its token in the host's keyring and not in `hosts.yml`, give the
+profile the token as a secret.
+
+The host's `~/.ssh` stays out unless the profile asks for it, for example to
+push over ssh from inside the container:
+
+```yaml
+container:
+  ssh: ro
+```
+
+That mounts the directory read-only, so git and ssh read the host's keys,
+`config` and `known_hosts` and never write to them. A profile mount or file
+secret at any of these paths replaces the automatic one
+([docs/design.md](docs/design.md), "Secrets").
 
 ## Status
 
